@@ -16,93 +16,170 @@
 #include <Math/DistFunc.h>
 #include <TF1.h>
 #include <TRandom3.h>
+#include <cmath>
 #include <gtest/gtest.h>
 #include <limits>
+#include <numeric>
+#include <vector>
 #include "unit/test_util/io_test.h"
 #include "unit/test_util/test_util.h"
 
 namespace bdm {
 
-TEST(RandomTest, Uniform) {
+// The engine is now std::mt19937_64 so we no longer compare sample-by-sample
+// against TRandom3.  Instead we verify three properties that must hold
+// regardless of the underlying engine:
+//   1. Reproducibility  – the same seed always produces the same sequence.
+//   2. Range            – every value falls in the requested interval.
+//   3. RNG-object parity – GetUniformRng().Sample() and Uniform(min,max)
+//                          draw from the same engine and stay in range.
+  TEST(RandomTest, Uniform) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
-
+ 
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
+  
   random->SetSeed(42);
-  reference.SetSeed(42);
+  std::vector<real_t> run1;
 
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Uniform()), random->Uniform());
+    run1.push_back(random->Uniform());
   }
+  random->SetSeed(42);
+  for (uint64_t i = 0; i < 10; i++) {
+    EXPECT_REAL_EQ(run1[i], random->Uniform());
+  }
+  // --- 2a. Range check: Uniform(max) must be in [0, max) ----------------
+  random->SetSeed(42);
+  for (uint64_t i = 1; i <= 10; i++) {
+    const real_t max = static_cast<real_t>(i);
+    const real_t val = random->Uniform(max);
+    EXPECT_GE(val, static_cast<real_t>(0));
+    EXPECT_LT(val, max);
+  }
+
+  // --- 2b. Range check: Uniform(min, max) must be in [min, max) ---------
+  random->SetSeed(42);
 
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Uniform(i)),
-                   random->Uniform(i));
+    const real_t lo = static_cast<real_t>(i);
+    const real_t hi = lo + static_cast<real_t>(2);
+    const real_t val = random->Uniform(lo, hi);
+    EXPECT_GE(val, lo);
+    EXPECT_LT(val, hi);
   }
-
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Uniform(i, i + 2)),
-                   random->Uniform(i, i + 2));
-  }
-
+  // --- 3. GetUniformRng: samples must stay within [3, 4) ----------------
   auto distrng = random->GetUniformRng(3, 4);
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Uniform(3, 4)),
-                   distrng.Sample());
+    const real_t val = distrng.Sample();
+    EXPECT_GE(val, static_cast<real_t>(3));
+    EXPECT_LT(val, static_cast<real_t>(4));
+
   }
 }
-
+// UniformArray is a thin wrapper around Uniform(); the key properties to
+// verify are reproducibility and per-element range correctness.
 TEST(RandomTest, UniformArray) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
-
+  // --- 1. Reproducibility: same seed → identical array -----------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
+  auto run1 = random->UniformArray<5>();
+  random->SetSeed(42);
+  auto run2 = random->UniformArray<5>();
+  for (uint64_t i = 0; i < 5; i++) {
+    EXPECT_REAL_EQ(run1[i], run2[i]);
+  }
+  // --- 2a. UniformArray<N>(): all elements in [0, 1) -------------------
+  random->SetSeed(42);
   auto result = random->UniformArray<5>();
   for (uint64_t i = 0; i < 5; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Uniform()), result[i]);
+    EXPECT_GE(result[i], static_cast<real_t>(0));
+    EXPECT_LT(result[i], static_cast<real_t>(1));
   }
 
-  auto result1 = random->UniformArray<2>(8.3);
+   // --- 2b. UniformArray<N>(max): all elements in [0, max) --------------
+  random->SetSeed(42);
+  auto result1 = random->UniformArray<2>(static_cast<real_t>(8.3));
   for (uint64_t i = 0; i < 2; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Uniform(8.3)), result1[i]);
+    EXPECT_GE(result1[i], static_cast<real_t>(0));
+    EXPECT_LT(result1[i], static_cast<real_t>(8.3));
   }
 
-  auto result2 = random->UniformArray<12>(5.1, 9.87);
+  // --- 2c. UniformArray<N>(min, max): all elements in [min, max) -------
+  random->SetSeed(42);
+  auto result2 = random->UniformArray<12>(static_cast<real_t>(5.1),
+                                          static_cast<real_t>(9.87));
+
   for (uint64_t i = 0; i < 12; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Uniform(5.1, 9.87)),
-                   result2[i]);
+    EXPECT_GE(result2[i], static_cast<real_t>(5.1));
+    EXPECT_LT(result2[i], static_cast<real_t>(9.87));
   }
 }
-
+// Gaus now uses std::normal_distribution so per-sample parity with TRandom3
+// no longer holds.  We verify:
+//   1. Reproducibility  – same seed → same sequence.
+//   2. Statistical      – with N=10000 samples the empirical mean and standard
+//                         deviation must land within a tight tolerance of the
+//                         requested parameters (CLT guarantees this).
+//   3. GausRng object   – GetGausRng() draws from the same engine and its
+//                         statistics match the requested parameters.
 TEST(RandomTest, Gaus) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
+
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
+  random->SetSeed(42);
+  std::vector<real_t> run1;
+
+  for (uint64_t i = 0; i < 10; i++) {
+    run1.push_back(random->Gaus());
+  }
 
   random->SetSeed(42);
-  reference.SetSeed(42);
-
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Gaus()), random->Gaus());
+    EXPECT_REAL_EQ(run1[i], random->Gaus());
   }
 
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Gaus(i)), random->Gaus(i));
-  }
+  // --- 2. Statistical check for Gaus(mean, sigma) -----------------------
+  // With 10 000 samples the standard error of the mean is sigma/sqrt(N)
+  // ≈ 2/100 = 0.02, so a tolerance of 0.1 is very conservative.
+  const uint64_t kN = 10000;
+  const real_t kMean = static_cast<real_t>(5);
+  const real_t kSigma = static_cast<real_t>(2);
 
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Gaus(i, i + 2)),
-                   random->Gaus(i, i + 2));
+  random->SetSeed(123);
+  real_t sum = 0, sum_sq = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const real_t v = random->Gaus(kMean, kSigma);
+    sum += v;
+    sum_sq += v * v;
   }
+  const real_t sample_mean = sum / static_cast<real_t>(kN);
+  const real_t sample_var =
+      sum_sq / static_cast<real_t>(kN) - sample_mean * sample_mean;
+  EXPECT_NEAR(static_cast<double>(sample_mean), static_cast<double>(kMean),
+              0.1);
+  EXPECT_NEAR(static_cast<double>(std::sqrt(sample_var)),
+              static_cast<double>(kSigma), 0.1);
 
-  auto distrng = random->GetGausRng(3, 4);
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Gaus(3, 4)), distrng.Sample());
+  // --- 3. GetGausRng statistical check ----------------------------------
+  auto distrng = random->GetGausRng(static_cast<real_t>(3),
+                                    static_cast<real_t>(4));
+  sum = 0;
+  sum_sq = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const real_t v = distrng.Sample();
+    sum += v;
+    sum_sq += v * v;
   }
-}
+  const real_t rng_mean = sum / static_cast<real_t>(kN);
+  const real_t rng_var =
+      sum_sq / static_cast<real_t>(kN) - rng_mean * rng_mean;
+  EXPECT_NEAR(static_cast<double>(rng_mean), 3.0, 0.1);
+  EXPECT_NEAR(static_cast<double>(std::sqrt(rng_var)), 4.0, 0.2);
+
+  }
 
 TEST(RandomTest, Exp) {
   Simulation simulation(TEST_NAME);
@@ -422,24 +499,52 @@ TEST(RandomTest, Sphere) {
     EXPECT_REAL_EQ(expected_z, actual[2]);
   }
 }
-
+// IOTest for Random after the std::mt19937_64 migration.
+//
+// NOTE: mt_engine_ is marked //! (ROOT-transient) so its internal state is
+// NOT written to disk.  After a BackupAndRestore round-trip the engine is
+// re-default-constructed, which is deterministic but different from the
+// pre-backup state.  Callers that need reproducibility across checkpoints
+// must call SetSeed() again after restore.
+//
+// What we verify here:
+//   a) The object serializes and deserializes without crashing.
+//   b) Gaus() and Uniform() produce finite values after restore.
+//   c) After re-seeding the restored object its output matches a freshly
+//      seeded Random with the same seed (engine is working correctly).
 #ifdef USE_DICT
 TEST_F(IOTest, Random) {
   Random random;
-  TRandom3 reference;
-
   random.SetSeed(42);
-  reference.SetSeed(42);
-
+  // Consume a few values so the pre-backup state is non-trivial.
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(reference.Gaus(), random.Gaus());
+    (void)random.Gaus();
   }
 
   Random* restored;
   BackupAndRestore(random, &restored);
 
+  // (b) Values must be finite – the engine must be functional after restore.
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(reference.Uniform(i, i + 2), random.Uniform(i, i + 2));
+    const real_t u = restored->Uniform(static_cast<real_t>(i),
+                                       static_cast<real_t>(i + 2));
+    EXPECT_TRUE(std::isfinite(static_cast<double>(u)));
+    EXPECT_GE(u, static_cast<real_t>(i));
+    EXPECT_LT(u, static_cast<real_t>(i + 2));
+
+    const real_t g = restored->Gaus();
+    EXPECT_TRUE(std::isfinite(static_cast<double>(g)));
+  }
+
+  // (c) Re-seeding the restored object must give the same sequence as a
+  //     fresh Random seeded identically, proving the engine itself is intact.
+  Random fresh;
+  const uint64_t kReseed = 99;
+  restored->SetSeed(kReseed);
+  fresh.SetSeed(kReseed);
+  for (uint64_t i = 0; i < 10; i++) {
+    EXPECT_REAL_EQ(fresh.Uniform(), restored->Uniform());
+    EXPECT_REAL_EQ(fresh.Gaus(), restored->Gaus());
   }
 }
 

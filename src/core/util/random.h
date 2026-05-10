@@ -15,6 +15,7 @@
 #ifndef CORE_UTIL_RANDOM_H_
 #define CORE_UTIL_RANDOM_H_
 
+#include <random>
 #include <unordered_map>
 #include "core/container/fixed_size_vector.h"
 #include "core/container/math_array.h"
@@ -256,9 +257,10 @@ class PoissonRng : public DistributionRng<int> {
 };
 
 // -----------------------------------------------------------------------------
-/// Decorator for ROOT's TRandom
-/// Uses TRandom3 as default random number generator
-/// \see https://root.cern/doc/master/classTRandom.html
+/// Random number generator class for BioDynaMo.
+/// Uses std::mt19937_64 as the primary engine for Uniform and Gaus.
+/// All other distributions continue to delegate to ROOT's TRandom3 and will
+/// be migrated incrementally.
 class Random {
  public:
   Random();
@@ -267,13 +269,12 @@ class Random {
   ~Random();
   Random& operator=(const Random& other);
 
-  /// Forwards call to ROOT's `TRandom`.\n
+
   /// Returns a uniform deviate on the interval (0, max).
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Uses std::uniform_real_distribution backed by std::mt19937_64.
   real_t Uniform(real_t max = 1.0);
-  /// Forwards call to ROOT's `TRandom`.\n
   /// Returns a uniform deviate on the interval (min, max).
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Uses std::uniform_real_distribution backed by std::mt19937_64.
   real_t Uniform(real_t min, real_t max);
 
   /// Returns an array of uniform random numbers in the interval (0, max)
@@ -296,8 +297,8 @@ class Random {
     return ret;
   }
 
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns a Gaussian (normal) deviate with given mean and sigma.
+  /// Uses std::normal_distribution backed by std::mt19937_64.
   real_t Gaus(real_t mean = 0.0, real_t sigma = 1.0);
   /// Forwards call to ROOT's `TRandom`.\n
   /// \see https://root.cern/doc/master/classTRandom.html
@@ -341,6 +342,13 @@ class Random {
   /// \see https://root.cern/doc/master/classTRandom.html
   /// for a list of available choices
   void SetGenerator(TRandom* new_rng);
+
+    /// Returns a reference to the underlying std::mt19937_64 engine.
+  /// Distribution Rng subclasses use this to draw samples without requiring
+  /// friend access or direct member exposure.  Prefer this over any direct
+  /// access to mt_engine_ so that adding new distributions never requires
+  /// touching the private section of this class.
+  std::mt19937_64& GetEngine();
 
   /// Returns a random number generator that draws samples from a
   /// uniform distribution with given parameters.
@@ -421,6 +429,14 @@ class Random {
  private:
   friend class DistributionRng<real_t>;
   friend class DistributionRng<int>;
+
+  /// Primary RNG engine for Uniform and Gaus distributions.
+  /// Replaces TRandom3 for these two distributions as a first refactor step.
+  std::mt19937_64 mt_engine_;  //!
+
+  /// Legacy ROOT RNG retained for distributions not yet migrated to std.
+  /// Will be removed incrementally as each distribution is ported.
+
 
   TRandom* generator_ = nullptr;
   /// Stores TF1 pointers that have been created for a specific user-defined

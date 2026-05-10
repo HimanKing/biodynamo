@@ -17,19 +17,33 @@
 #include <TF2.h>
 #include <TF3.h>
 #include <TRandom3.h>
+#include <random>
 #include "core/simulation.h"
+
 
 namespace bdm {
 
 // -----------------------------------------------------------------------------
-Random::Random() : generator_(new TRandom3()) {}
+// Seed mt_engine_ from a non-deterministic source so each instance starts
+// with a unique sequence by default, matching TRandom3's time-based seeding.
+Random::Random()
+    : mt_engine_(std::random_device{}()), generator_(new TRandom3()) {}
+
 
 // -----------------------------------------------------------------------------
 Random::Random(TRootIOCtor*) {}
 
 // -----------------------------------------------------------------------------
+// In random.cc — the missing definition
+std::mt19937_64& Random::GetEngine() {
+  return mt_engine_;
+}
+
+// -----------------------------------------------------------------------------
 Random::Random(const Random& other)
-    : generator_(static_cast<TRandom*>(other.generator_->Clone())) {}
+    : mt_engine_(other.mt_engine_),
+      generator_(static_cast<TRandom*>(other.generator_->Clone())) {}
+
 
 // -----------------------------------------------------------------------------
 Random::~Random() {
@@ -50,6 +64,7 @@ Random::~Random() {
 // -----------------------------------------------------------------------------
 Random& Random::operator=(const Random& other) {
   if (&other != this) {
+    mt_engine_ = other.mt_engine_;
     if (generator_) {
       delete generator_;
     }
@@ -59,17 +74,23 @@ Random& Random::operator=(const Random& other) {
 }
 
 // -----------------------------------------------------------------------------
-real_t Random::Uniform(real_t max) { return generator_->Uniform(max); }
+real_t Random::Uniform(real_t max) {
+  std::uniform_real_distribution<real_t> dist(static_cast<real_t>(0), max);
+  return dist(mt_engine_);
+}
 
 // -----------------------------------------------------------------------------
 real_t Random::Uniform(real_t min, real_t max) {
-  return generator_->Uniform(min, max);
+  std::uniform_real_distribution<real_t> dist(min, max);
+  return dist(mt_engine_);
 }
 
 // -----------------------------------------------------------------------------
 real_t Random::Gaus(real_t mean, real_t sigma) {
-  return generator_->Gaus(mean, sigma);
+  std::normal_distribution<real_t> dist(mean, sigma);
+  return dist(mt_engine_);
 }
+
 
 // -----------------------------------------------------------------------------
 real_t Random::Exp(real_t tau) { return generator_->Exp(tau); }
@@ -115,7 +136,10 @@ MathArray<real_t, 3> Random::Sphere(real_t r) {
 }
 
 // -----------------------------------------------------------------------------
-void Random::SetSeed(uint64_t seed) { generator_->SetSeed(seed); }
+void Random::SetSeed(uint64_t seed) {
+  mt_engine_.seed(seed);
+  generator_->SetSeed(seed);
+}
 
 // -----------------------------------------------------------------------------
 uint64_t Random::GetSeed() const { return generator_->GetSeed(); }
@@ -175,8 +199,14 @@ template MathArray<int, 3> DistributionRng<int>::Sample3Impl(TRandom*);
 // -----------------------------------------------------------------------------
 UniformRng::UniformRng(real_t min, real_t max) : min_(min), max_(max) {}
 UniformRng::~UniformRng() = default;
-real_t UniformRng::SampleImpl(TRandom* rng) { return rng->Uniform(min_, max_); }
-
+// Uses std::uniform_real_distribution driven by Random::GetEngine().
+// The TRandom* parameter is ignored; it exists only to satisfy the virtual
+// interface, which will be updated in a future refactor step.
+real_t UniformRng::SampleImpl(TRandom* /*rng*/) {
+  auto& engine = Simulation::GetActive()->GetRandom()->GetEngine();
+  std::uniform_real_distribution<real_t> dist(min_, max_);
+  return dist(engine);
+}
 UniformRng Random::GetUniformRng(real_t min, real_t max) const {
   return UniformRng(min, max);
 }
@@ -184,7 +214,14 @@ UniformRng Random::GetUniformRng(real_t min, real_t max) const {
 // -----------------------------------------------------------------------------
 GausRng::GausRng(real_t mean, real_t sigma) : mean_(mean), sigma_(sigma) {}
 GausRng::~GausRng() = default;
-real_t GausRng::SampleImpl(TRandom* rng) { return rng->Gaus(mean_, sigma_); }
+// Uses std::normal_distribution driven by Random::GetEngine().
+// The TRandom* parameter is ignored; it exists only to satisfy the virtual
+// interface, which will be updated in a future refactor step.
+real_t GausRng::SampleImpl(TRandom* /*rng*/) {
+  auto& engine = Simulation::GetActive()->GetRandom()->GetEngine();
+  std::normal_distribution<real_t> dist(mean_, sigma_);
+  return dist(engine);
+}
 
 GausRng Random::GetGausRng(real_t mean, real_t sigma) const {
   return GausRng(mean, sigma);

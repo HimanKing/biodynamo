@@ -181,27 +181,53 @@ TEST(RandomTest, Gaus) {
 
   }
 
+  // Exp now uses std::exponential_distribution so per-sample parity with
+// TRandom3 no longer holds.  We verify:
+//   1. Reproducibility – same seed → same sequence.
+//   2. Range           – every sample is non-negative.
+//   3. Statistical     – with N=10000 samples the empirical mean is close to
+//                        the requested tau (CLT).
+//   4. ExpRng object   – GetExpRng() draws from the same engine, stays in
+//                        range and matches the requested mean.
 TEST(RandomTest, Exp) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
 
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
+  std::vector<real_t> run1;
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Exp(i)), random->Exp(i));
+    run1.push_back(random->Exp(static_cast<real_t>(5)));
+  }
+  random->SetSeed(42);
+  for (uint64_t i = 0; i < 10; i++) {
+    EXPECT_REAL_EQ(run1[i], random->Exp(static_cast<real_t>(5)));
   }
 
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Exp(i + 2)),
-                   random->Exp(i + 2));
+    // --- 2 & 3. Range + statistical check for Exp(tau) --------------------
+  const uint64_t kN = 10000;
+  const real_t kTau = static_cast<real_t>(5);
+  random->SetSeed(123);
+  real_t sum = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const real_t v = random->Exp(kTau);
+    EXPECT_GE(v, static_cast<real_t>(0));
+    sum += v;
   }
+  const real_t sample_mean = sum / static_cast<real_t>(kN);
+  EXPECT_NEAR(static_cast<double>(sample_mean), static_cast<double>(kTau),
+              0.2);
 
-  auto distrng = random->GetExpRng(123);
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.Exp(123)), distrng.Sample());
+  // --- 4. GetExpRng range + statistical check ---------------------------
+  auto distrng = random->GetExpRng(kTau);
+  sum = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const real_t v = distrng.Sample();
+    EXPECT_GE(v, static_cast<real_t>(0));
+    sum += v;
   }
+  const real_t rng_mean = sum / static_cast<real_t>(kN);
+  EXPECT_NEAR(static_cast<double>(rng_mean), static_cast<double>(kTau), 0.2);
 }
 
 TEST(RandomTest, Landau) {
@@ -232,29 +258,58 @@ TEST(RandomTest, Landau) {
   }
 }
 
+// PoissonD now uses std::poisson_distribution so per-sample parity with
+// TRandom3 no longer holds.  We verify:
+//   1. Reproducibility – same seed → same sequence.
+//   2. Range           – every sample is non-negative.
+//   3. Statistical     – with N=10000 samples the empirical mean and variance
+//                        are close to the requested mean.
+//   4. PoissonDRng     – GetPoissonDRng() draws from the same engine and its
+//                        statistics match the requested mean.
 TEST(RandomTest, PoissonD) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
   TRandom3 reference;
-
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
+  std::vector<real_t> run1;
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.PoissonD(i)),
-                   random->PoissonD(i));
+    run1.push_back(random->PoissonD(static_cast<real_t>(8)));
+  }
+  random->SetSeed(42);
+  for (uint64_t i = 0; i < 10; i++) {
+    EXPECT_REAL_EQ(run1[i], random->PoissonD(static_cast<real_t>(8)));
   }
 
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.PoissonD(i + 2)),
-                   random->PoissonD(i + 2));
+  // --- 2 & 3. Range + statistical check for PoissonD(mean) --------------
+  const uint64_t kN = 10000;
+  const real_t kMean = static_cast<real_t>(8);
+  random->SetSeed(123);
+  real_t sum = 0, sum_sq = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const real_t v = random->PoissonD(kMean);
+    EXPECT_GE(v, static_cast<real_t>(0));
+    sum += v;
+    sum_sq += v * v;
   }
+  const real_t sample_mean = sum / static_cast<real_t>(kN);
+  const real_t sample_var =
+      sum_sq / static_cast<real_t>(kN) - sample_mean * sample_mean;
+  EXPECT_NEAR(static_cast<double>(sample_mean), static_cast<double>(kMean),
+              0.2);
+  EXPECT_NEAR(static_cast<double>(sample_var), static_cast<double>(kMean),
+              0.5);
 
-  auto distrng = random->GetPoissonDRng(123);
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_REAL_EQ(static_cast<real_t>(reference.PoissonD(123)),
-                   distrng.Sample());
+  // --- 4. GetPoissonDRng range + statistical check ----------------------
+  auto distrng = random->GetPoissonDRng(kMean);
+  sum = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const real_t v = distrng.Sample();
+    EXPECT_GE(v, static_cast<real_t>(0));
+    sum += v;
   }
+  const real_t rng_mean = sum / static_cast<real_t>(kN);
+  EXPECT_NEAR(static_cast<double>(rng_mean), static_cast<double>(kMean), 0.2);
 }
 
 TEST(RandomTest, BreitWigner) {
@@ -407,22 +462,60 @@ TEST(RandomTest, UserDefinedDistRng3DParallel) {
   EXPECT_LT(sum, std::numeric_limits<real_t>::max());
 }
 
+// Binomial now uses std::binomial_distribution so per-sample parity with
+// TRandom3 no longer holds.  We verify:
+//   1. Reproducibility – same seed → same sequence.
+//   2. Range           – every sample is in [0, ntot].
+//   3. Statistical     – with N=10000 samples the empirical mean is close to
+//                        ntot * prob.
+//   4. BinomialRng     – GetBinomialRng() draws from the same engine, stays
+//                        in range and matches the requested mean.
 TEST(RandomTest, Binomial) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
 
+  const int kNtot = 20;
+  const real_t kProb = static_cast<real_t>(0.4);
+  const real_t kExpectedMean =
+      static_cast<real_t>(kNtot) * kProb;
+
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
+  std::vector<int> run1;
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_EQ(reference.Binomial(i, i + 2), random->Binomial(i, i + 2));
+    run1.push_back(random->Binomial(kNtot, kProb));
+  }
+  random->SetSeed(42);
+  for (uint64_t i = 0; i < 10; i++) {
+    EXPECT_EQ(run1[i], random->Binomial(kNtot, kProb));
   }
 
-  auto distrng = random->GetBinomialRng(3, 4);
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_EQ(reference.Binomial(3, 4), distrng.Sample());
+  // --- 2 & 3. Range + statistical check for Binomial(ntot, prob) --------
+  const uint64_t kN = 10000;
+  random->SetSeed(123);
+  int64_t sum = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const int v = random->Binomial(kNtot, kProb);
+    EXPECT_GE(v, 0);
+    EXPECT_LE(v, kNtot);
+    sum += v;
   }
+  const double sample_mean =
+      static_cast<double>(sum) / static_cast<double>(kN);
+  EXPECT_NEAR(sample_mean, static_cast<double>(kExpectedMean), 0.2);
+
+  // --- 4. GetBinomialRng range + statistical check ----------------------
+  auto distrng = random->GetBinomialRng(kNtot, kProb);
+  sum = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const int v = distrng.Sample();
+    EXPECT_GE(v, 0);
+    EXPECT_LE(v, kNtot);
+    sum += v;
+  }
+  const double rng_mean =
+      static_cast<double>(sum) / static_cast<double>(kN);
+  EXPECT_NEAR(rng_mean, static_cast<double>(kExpectedMean), 0.2);
 }
 
 TEST(RandomTest, Poisson) {
@@ -447,16 +540,31 @@ TEST(RandomTest, Poisson) {
   }
 }
 
+// Integer now uses std::uniform_int_distribution so per-sample parity with
+// TRandom3 no longer holds.  We verify:
+//   1. Reproducibility – same seed → same sequence.
+//   2. Range           – every sample lies in [0, max - 1].
 TEST(RandomTest, Integer) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
 
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
+  std::vector<unsigned> run1;
   for (uint64_t i = 1; i < 10; i++) {
-    EXPECT_EQ(reference.Integer(i), random->Integer(i));
+    run1.push_back(random->Integer(static_cast<int>(i + 1)));
+  }
+  random->SetSeed(42);
+  for (uint64_t i = 1; i < 10; i++) {
+    EXPECT_EQ(run1[i - 1], random->Integer(static_cast<int>(i + 1)));
+  }
+
+  // --- 2. Range check: Integer(max) must be in [0, max - 1] -------------
+  random->SetSeed(123);
+  const int kMax = 7;
+  for (uint64_t i = 0; i < 1000; i++) {
+    const unsigned v = random->Integer(kMax);
+    EXPECT_LE(v, static_cast<unsigned>(kMax - 1));
   }
 }
 

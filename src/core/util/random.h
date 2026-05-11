@@ -300,24 +300,25 @@ class Random {
   /// Returns a Gaussian (normal) deviate with given mean and sigma.
   /// Uses std::normal_distribution backed by std::mt19937_64.
   real_t Gaus(real_t mean = 0.0, real_t sigma = 1.0);
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+   /// Returns an exponentially distributed deviate with mean `tau`.
+  /// Uses std::exponential_distribution backed by std::mt19937_64.
   real_t Exp(real_t tau);
   /// Forwards call to ROOT's `TRandom`.\n
   /// \see https://root.cern/doc/master/classTRandom.html
   real_t Landau(real_t mean = 0, real_t sigma = 1);
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns a Poisson-distributed deviate with the given `mean`, returned as
+  /// real_t for API compatibility with ROOT's `PoissonD`.
+  /// Uses std::poisson_distribution backed by std::mt19937_64.
   real_t PoissonD(real_t mean);
   /// Forwards call to ROOT's `TRandom`.\n
   /// \see https://root.cern/doc/master/classTRandom.html
   real_t BreitWigner(real_t mean = 0, real_t gamma = 1);
 
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns a uniformly distributed integer in [0, max - 1].
+  /// Uses std::uniform_int_distribution backed by std::mt19937_64.
   unsigned Integer(int max);
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns a binomially distributed integer in [0, ntot].
+  /// Uses std::binomial_distribution backed by std::mt19937_64.
   int Binomial(int ntot, real_t prob);
   /// Forwards call to ROOT's `TRandom`.\n
   /// \see https://root.cern/doc/master/classTRandom.html

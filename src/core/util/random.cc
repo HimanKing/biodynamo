@@ -93,7 +93,13 @@ real_t Random::Gaus(real_t mean, real_t sigma) {
 
 
 // -----------------------------------------------------------------------------
-real_t Random::Exp(real_t tau) { return generator_->Exp(tau); }
+// Uses std::exponential_distribution driven by mt_engine_.
+// ROOT's tau is the mean/scale parameter, while
+// std::exponential_distribution expects the rate parameter lambda = 1 / tau.
+real_t Random::Exp(real_t tau) {
+  std::exponential_distribution<real_t> dist(static_cast<real_t>(1.0) / tau);
+  return dist(mt_engine_);
+}
 
 // -----------------------------------------------------------------------------
 real_t Random::Landau(real_t mean, real_t sigma) {
@@ -101,7 +107,16 @@ real_t Random::Landau(real_t mean, real_t sigma) {
 }
 
 // -----------------------------------------------------------------------------
-real_t Random::PoissonD(real_t mean) { return generator_->PoissonD(mean); }
+// Uses std::poisson_distribution driven by mt_engine_.
+// Note: ROOT's PoissonD may switch to a Gaussian approximation for very large
+// means, while std::poisson_distribution always samples from the true Poisson
+// distribution.  For the mean values typical of BioDynaMo simulations the two
+// are statistically equivalent.  The std distribution returns an integer type
+// (long); the result is cast back to real_t to preserve the original API.
+real_t Random::PoissonD(real_t mean) {
+  std::poisson_distribution<long> dist(static_cast<double>(mean));
+  return static_cast<real_t>(dist(mt_engine_));
+}
 
 // -----------------------------------------------------------------------------
 real_t Random::BreitWigner(real_t mean, real_t gamma) {
@@ -109,11 +124,22 @@ real_t Random::BreitWigner(real_t mean, real_t gamma) {
 }
 
 // -----------------------------------------------------------------------------
-unsigned Random::Integer(int max) { return generator_->Integer(max); }
+// Uses std::uniform_int_distribution driven by mt_engine_.
+// ROOT's Integer(max) returns values in [0, max - 1]; std uses inclusive
+// bounds, so the upper bound is max - 1.
+unsigned Random::Integer(int max) {
+  std::uniform_int_distribution<unsigned> dist(
+      0u, static_cast<unsigned>(max) - 1u);
+  return dist(mt_engine_);
+}
+
 
 // -----------------------------------------------------------------------------
+// Uses std::binomial_distribution driven by mt_engine_.
+// Parameters map directly: ntot = number of trials, prob = success probability.
 int Random::Binomial(int ntot, real_t prob) {
-  return generator_->Binomial(ntot, prob);
+  std::binomial_distribution<int> dist(ntot, static_cast<double>(prob));
+  return dist(mt_engine_);
 }
 
 // -----------------------------------------------------------------------------
@@ -230,7 +256,14 @@ GausRng Random::GetGausRng(real_t mean, real_t sigma) const {
 // -----------------------------------------------------------------------------
 ExpRng::ExpRng(real_t tau) : tau_(tau) {}
 ExpRng::~ExpRng() = default;
-real_t ExpRng::SampleImpl(TRandom* rng) { return rng->Exp(tau_); }
+// Uses std::exponential_distribution driven by Random::GetEngine().
+// The TRandom* parameter is ignored; it exists only to satisfy the virtual
+// interface, which will be updated in a future refactor step.
+real_t ExpRng::SampleImpl(TRandom* /*rng*/) {
+  auto& engine = Simulation::GetActive()->GetRandom()->GetEngine();
+  std::exponential_distribution<real_t> dist(static_cast<real_t>(1.0) / tau_);
+  return dist(engine);
+}
 
 ExpRng Random::GetExpRng(real_t tau) const { return ExpRng(tau); }
 
@@ -248,7 +281,16 @@ LandauRng Random::GetLandauRng(real_t mean, real_t sigma) const {
 // -----------------------------------------------------------------------------
 PoissonDRng::PoissonDRng(real_t mean) : mean_(mean) {}
 PoissonDRng::~PoissonDRng() = default;
-real_t PoissonDRng::SampleImpl(TRandom* rng) { return rng->PoissonD(mean_); }
+// Uses std::poisson_distribution driven by Random::GetEngine().
+// The TRandom* parameter is ignored; it exists only to satisfy the virtual
+// interface, which will be updated in a future refactor step.
+// See Random::PoissonD for notes on the large-mean Gaussian approximation
+// used by ROOT.
+real_t PoissonDRng::SampleImpl(TRandom* /*rng*/) {
+  auto& engine = Simulation::GetActive()->GetRandom()->GetEngine();
+  std::poisson_distribution<long> dist(static_cast<double>(mean_));
+  return static_cast<real_t>(dist(engine));
+}
 
 PoissonDRng Random::GetPoissonDRng(real_t mean) const {
   return PoissonDRng(mean);
@@ -388,8 +430,13 @@ UserDefinedDistRng3D Random::GetUserDefinedDistRng3D(
 // -----------------------------------------------------------------------------
 BinomialRng::BinomialRng(int ntot, real_t prob) : ntot_(ntot), prob_(prob) {}
 BinomialRng::~BinomialRng() = default;
-int BinomialRng::SampleImpl(TRandom* rng) {
-  return rng->Binomial(ntot_, prob_);
+// Uses std::binomial_distribution driven by Random::GetEngine().
+// The TRandom* parameter is ignored; it exists only to satisfy the virtual
+// interface, which will be updated in a future refactor step.
+int BinomialRng::SampleImpl(TRandom* /*rng*/) {
+  auto& engine = Simulation::GetActive()->GetRandom()->GetEngine();
+  std::binomial_distribution<int> dist(ntot_, static_cast<double>(prob_));
+  return dist(engine);
 }
 
 BinomialRng Random::GetBinomialRng(int ntot, real_t prob) const {

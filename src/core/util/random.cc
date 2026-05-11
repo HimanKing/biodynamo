@@ -17,6 +17,7 @@
 #include <TF2.h>
 #include <TF3.h>
 #include <TRandom3.h>
+#include <cmath>
 #include <random>
 #include "core/simulation.h"
 
@@ -143,22 +144,55 @@ int Random::Binomial(int ntot, real_t prob) {
 }
 
 // -----------------------------------------------------------------------------
-int Random::Poisson(real_t mean) { return generator_->Poisson(mean); }
-
-// -----------------------------------------------------------------------------
-MathArray<real_t, 2> Random::Circle(real_t r) {
-  MathArray<double, 2> ret_double;
-  generator_->Circle(ret_double[0], ret_double[1], static_cast<double>(r));
-  return {static_cast<real_t>(ret_double[0]),
-          static_cast<real_t>(ret_double[1])};
+// Uses std::poisson_distribution driven by mt_engine_.
+// ROOT's Poisson(mean) and std::poisson_distribution both take the mean
+// directly, so no parameter transformation is required.
+int Random::Poisson(real_t mean) {
+  std::poisson_distribution<int> dist(static_cast<double>(mean));
+  return dist(mt_engine_);
 }
 
 // -----------------------------------------------------------------------------
+// Generates a point uniformly distributed on the circumference of a circle
+// with radius r by sampling theta ~ Uniform(0, 2*pi) and returning
+// (r*cos(theta), r*sin(theta)).  Pi is defined locally because M_PI is not
+// portable across platforms / compilers.
+MathArray<real_t, 2> Random::Circle(real_t r) {
+  constexpr real_t kPi =
+      static_cast<real_t>(3.141592653589793238462643383279502884);
+  constexpr real_t kTwoPi = static_cast<real_t>(2) * kPi;
+
+  std::uniform_real_distribution<real_t> dist(static_cast<real_t>(0), kTwoPi);
+  const real_t theta = dist(mt_engine_);
+
+  return {r * std::cos(theta), r * std::sin(theta)};
+}
+
+// -----------------------------------------------------------------------------
+// Generates a point uniformly distributed on the surface of a sphere with
+// radius r using the standard Gaussian-vector normalisation method:
+// a 3D vector with i.i.d. standard normal components is rotationally
+// symmetric, so normalising it produces a direction uniformly distributed
+// on the sphere.  Scaling by r places the point on the requested surface.
+// Resample in the (statistically vanishing) case norm == 0 to avoid 0/0.
 MathArray<real_t, 3> Random::Sphere(real_t r) {
-  MathArray<double, 3> ret;
-  generator_->Sphere(ret[0], ret[1], ret[2], r);
-  return {static_cast<real_t>(ret[0]), static_cast<real_t>(ret[1]),
-          static_cast<real_t>(ret[2])};
+  std::normal_distribution<real_t> dist(static_cast<real_t>(0),
+                                        static_cast<real_t>(1));
+
+  real_t x = 0;
+  real_t y = 0;
+  real_t z = 0;
+  real_t norm = 0;
+
+  do {
+    x = dist(mt_engine_);
+    y = dist(mt_engine_);
+    z = dist(mt_engine_);
+    norm = std::sqrt(x * x + y * y + z * z);
+  } while (norm == static_cast<real_t>(0));
+
+  const real_t scale = r / norm;
+  return {x * scale, y * scale, z * scale};
 }
 
 // -----------------------------------------------------------------------------
@@ -446,7 +480,14 @@ BinomialRng Random::GetBinomialRng(int ntot, real_t prob) const {
 // -----------------------------------------------------------------------------
 PoissonRng::PoissonRng(real_t mean) : mean_(mean) {}
 PoissonRng::~PoissonRng() = default;
-int PoissonRng::SampleImpl(TRandom* rng) { return rng->Poisson(mean_); }
+// Uses std::poisson_distribution driven by Random::GetEngine().
+// The TRandom* parameter is ignored; it exists only to satisfy the virtual
+// interface, which will be updated in a future refactor step.
+int PoissonRng::SampleImpl(TRandom* /*rng*/) {
+  auto& engine = Simulation::GetActive()->GetRandom()->GetEngine();
+  std::poisson_distribution<int> dist(static_cast<double>(mean_));
+  return dist(engine);
+}
 
 PoissonRng Random::GetPoissonRng(real_t mean) const { return PoissonRng(mean); }
 

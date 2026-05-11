@@ -320,15 +320,17 @@ class Random {
   /// Returns a binomially distributed integer in [0, ntot].
   /// Uses std::binomial_distribution backed by std::mt19937_64.
   int Binomial(int ntot, real_t prob);
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns a Poisson-distributed integer with the given mean.
+  /// Uses std::poisson_distribution backed by std::mt19937_64.
   int Poisson(real_t mean);
 
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns a random point uniformly distributed on the circumference
+  /// of a circle with the given radius.
+  /// Uses std::uniform_real_distribution backed by std::mt19937_64.
   MathArray<real_t, 2> Circle(real_t radius);
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns a random point uniformly distributed on the surface
+  /// of a sphere with the given radius.
+  /// Uses normal-vector normalization backed by std::mt19937_64.
   MathArray<real_t, 3> Sphere(real_t radius);
 
   /// Forwards call to ROOT's `TRandom`.\n

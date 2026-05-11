@@ -518,26 +518,57 @@ TEST(RandomTest, Binomial) {
   EXPECT_NEAR(rng_mean, static_cast<double>(kExpectedMean), 0.2);
 }
 
+// Poisson now uses std::poisson_distribution so per-sample parity with
+// TRandom3 no longer holds.  We verify:
+//   1. Reproducibility – same seed → same sequence.
+//   2. Support         – every sample is non-negative.
+//   3. Statistical     – with N=10000 samples the empirical mean and variance
+//                        are close to the requested mean.
+//   4. PoissonRng      – GetPoissonRng() draws from the same engine and its
+//                        empirical mean matches the requested mean.
 TEST(RandomTest, Poisson) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
 
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
+  std::vector<int> run1;
   for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_EQ(reference.Poisson(i), random->Poisson(i));
+    run1.push_back(random->Poisson(static_cast<real_t>(8)));
+  }
+  random->SetSeed(42);
+  for (uint64_t i = 0; i < 10; i++) {
+    EXPECT_EQ(run1[i], random->Poisson(static_cast<real_t>(8)));
   }
 
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_EQ(reference.Poisson(i + 2), random->Poisson(i + 2));
+  // --- 2 & 3. Support + statistical check for Poisson(mean) -------------
+  const uint64_t kN = 10000;
+  const real_t kMean = static_cast<real_t>(8);
+  random->SetSeed(123);
+  double sum = 0;
+  double sum_sq = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const int v = random->Poisson(kMean);
+    EXPECT_GE(v, 0);
+    sum += v;
+    sum_sq += static_cast<double>(v) * v;
   }
+  const double sample_mean = sum / static_cast<double>(kN);
+  const double sample_var =
+      sum_sq / static_cast<double>(kN) - sample_mean * sample_mean;
+  EXPECT_NEAR(sample_mean, static_cast<double>(kMean), 0.2);
+  EXPECT_NEAR(sample_var, static_cast<double>(kMean), 0.5);
 
-  auto distrng = random->GetPoissonRng(123);
-  for (uint64_t i = 0; i < 10; i++) {
-    EXPECT_EQ(reference.Poisson(123), distrng.Sample());
+  // --- 4. GetPoissonRng range + statistical check -----------------------
+  auto distrng = random->GetPoissonRng(kMean);
+  sum = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    const int v = distrng.Sample();
+    EXPECT_GE(v, 0);
+    sum += v;
   }
+  const double rng_mean = sum / static_cast<double>(kN);
+  EXPECT_NEAR(rng_mean, static_cast<double>(kMean), 0.2);
 }
 
 // Integer now uses std::uniform_int_distribution so per-sample parity with
@@ -568,44 +599,110 @@ TEST(RandomTest, Integer) {
   }
 }
 
+// Circle now uses std::uniform_real_distribution + cos/sin so per-sample
+// parity with TRandom3 no longer holds.  We verify:
+//   1. Reproducibility – same seed → same sequence of points.
+//   2. Radius invariant – every point lies on the circle of radius r.
+//   3. Symmetry        – with N=10000 samples the empirical means of x and y
+//                        are close to 0.
 TEST(RandomTest, Circle) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
 
+  const real_t kR = static_cast<real_t>(3);
+  
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
-  for (uint64_t i = 1; i < 10; i++) {
-    double expected_x = 0;
-    double expected_y = 0;
-    reference.Circle(expected_x, expected_y, i);
-
-    auto actual = random->Circle(i);
-    EXPECT_REAL_EQ(expected_x, actual[0]);
-    EXPECT_REAL_EQ(expected_y, actual[1]);
+  std::vector<MathArray<real_t, 2>> run1;
+  for (uint64_t i = 0; i < 10; i++) {
+    run1.push_back(random->Circle(kR));
   }
+  random->SetSeed(42);
+  for (uint64_t i = 0; i < 10; i++) {
+    auto actual = random->Circle(kR);
+    EXPECT_REAL_EQ(run1[i][0], actual[0]);
+    EXPECT_REAL_EQ(run1[i][1], actual[1]);
+  }
+
+  // --- 2 & 3. Radius invariant + symmetry check -------------------------
+  const uint64_t kN = 10000;
+  random->SetSeed(123);
+  double sum_x = 0;
+  double sum_y = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    auto p = random->Circle(kR);
+    const real_t radius =
+        std::sqrt(p[0] * p[0] + p[1] * p[1]);
+    EXPECT_NEAR(static_cast<double>(radius), static_cast<double>(kR),
+                static_cast<double>(abs_error<real_t>::value));
+    sum_x += p[0];
+    sum_y += p[1];
+  }
+  const double mean_x = sum_x / static_cast<double>(kN);
+  const double mean_y = sum_y / static_cast<double>(kN);
+  EXPECT_NEAR(mean_x, 0.0, 0.1);
+  EXPECT_NEAR(mean_y, 0.0, 0.1);
 }
 
+// Sphere now uses Gaussian-vector normalisation so per-sample parity with
+// TRandom3 no longer holds.  We verify:
+//   1. Reproducibility – same seed → same sequence of points.
+//   2. Radius invariant – every point lies on the sphere of radius r.
+//   3. Symmetry        – with N=10000 samples the empirical means of x, y, z
+//                        are close to 0.
+//   4. Distribution    – the empirical variance of z is close to r*r / 3
+//                        (each coordinate of a uniform point on the sphere
+//                        has variance r*r/3).
 TEST(RandomTest, Sphere) {
   Simulation simulation(TEST_NAME);
   auto* random = simulation.GetRandom();
-  TRandom3 reference;
 
+  const real_t kR = static_cast<real_t>(3);
+
+  // --- 1. Reproducibility: same seed → identical sequence ---------------
   random->SetSeed(42);
-  reference.SetSeed(42);
-
-  for (uint64_t i = 1; i < 10; i++) {
-    double expected_x = 0;
-    double expected_y = 0;
-    double expected_z = 0;
-    reference.Sphere(expected_x, expected_y, expected_z, i);
-
-    auto actual = random->Sphere(i);
-    EXPECT_REAL_EQ(expected_x, actual[0]);
-    EXPECT_REAL_EQ(expected_y, actual[1]);
-    EXPECT_REAL_EQ(expected_z, actual[2]);
+  std::vector<MathArray<real_t, 3>> run1;
+  for (uint64_t i = 0; i < 10; i++) {
+    run1.push_back(random->Sphere(kR));
   }
+  random->SetSeed(42);
+  for (uint64_t i = 0; i < 10; i++) {
+    auto actual = random->Sphere(kR);
+    EXPECT_REAL_EQ(run1[i][0], actual[0]);
+    EXPECT_REAL_EQ(run1[i][1], actual[1]);
+    EXPECT_REAL_EQ(run1[i][2], actual[2]);
+  }
+
+  // --- 2, 3 & 4. Radius invariant + symmetry + variance check -----------
+  const uint64_t kN = 10000;
+  random->SetSeed(123);
+  double sum_x = 0;
+  double sum_y = 0;
+  double sum_z = 0;
+  double sum_z_sq = 0;
+  for (uint64_t i = 0; i < kN; i++) {
+    auto p = random->Sphere(kR);
+    const real_t radius =
+        std::sqrt(p[0] * p[0] + p[1] * p[1] + p[2] * p[2]);
+    EXPECT_NEAR(static_cast<double>(radius), static_cast<double>(kR),
+                static_cast<double>(abs_error<real_t>::value));
+    sum_x += p[0];
+    sum_y += p[1];
+    sum_z += p[2];
+    sum_z_sq += static_cast<double>(p[2]) * p[2];
+  }
+  const double mean_x = sum_x / static_cast<double>(kN);
+  const double mean_y = sum_y / static_cast<double>(kN);
+  const double mean_z = sum_z / static_cast<double>(kN);
+  EXPECT_NEAR(mean_x, 0.0, 0.1);
+  EXPECT_NEAR(mean_y, 0.0, 0.1);
+  EXPECT_NEAR(mean_z, 0.0, 0.1);
+
+  const double var_z =
+      sum_z_sq / static_cast<double>(kN) - mean_z * mean_z;
+  const double expected_var =
+      static_cast<double>(kR) * static_cast<double>(kR) / 3.0;
+  EXPECT_NEAR(var_z, expected_var, 0.2);
 }
 // IOTest for Random after the std::mt19937_64 migration.
 //

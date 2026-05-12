@@ -197,12 +197,13 @@ MathArray<real_t, 3> Random::Sphere(real_t r) {
 
 // -----------------------------------------------------------------------------
 void Random::SetSeed(uint64_t seed) {
+  last_seed_ = seed;
   mt_engine_.seed(seed);
   generator_->SetSeed(seed);
 }
 
 // -----------------------------------------------------------------------------
-uint64_t Random::GetSeed() const { return generator_->GetSeed(); }
+uint64_t Random::GetSeed() const { return last_seed_; }
 
 // -----------------------------------------------------------------------------
 void Random::SetGenerator(TRandom* new_generator) {

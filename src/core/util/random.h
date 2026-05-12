@@ -337,8 +337,10 @@ class Random {
   /// \see https://root.cern/doc/master/classTRandom.html
   void SetSeed(uint64_t seed);
 
-  /// Forwards call to ROOT's `TRandom`.\n
-  /// \see https://root.cern/doc/master/classTRandom.html
+  /// Returns the last seed passed to SetSeed().
+  /// Stored internally rather than delegating to TRandom3, so the value
+  /// remains correct even if GetEngine() was used to seed mt_engine_ via a
+  /// different path.
   uint64_t GetSeed() const;
 
   /// Updates the internal random number generator
@@ -432,6 +434,11 @@ class Random {
  private:
   friend class DistributionRng<real_t>;
   friend class DistributionRng<int>;
+
+  /// Stores the last seed passed to SetSeed().
+  /// Returned by GetSeed() so the value is authoritative regardless of whether
+  /// GetEngine() was used to seed mt_engine_ directly.
+  uint64_t last_seed_ = 0;
 
   /// Primary RNG engine for Uniform and Gaus distributions.
   /// Replaces TRandom3 for these two distributions as a first refactor step.
